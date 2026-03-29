@@ -1,0 +1,215 @@
+import React, { useState, useEffect } from 'react';
+import { User, Play, Settings, RefreshCcw, Save, X } from 'lucide-react';
+
+const Agents = () => {
+  const [agents, setAgents] = useState([]);
+  const [llmModels, setLlmModels] = useState([]);
+  const [embeddingModels, setEmbeddingModels] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editingAgent, setEditingAgent] = useState(null);
+  const [selectedLlmId, setSelectedLlmId] = useState('');
+  const [selectedEmbeddingId, setSelectedEmbeddingId] = useState('');
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const [agentsRes, modelsRes] = await Promise.all([
+        fetch('/api/agents'),
+        fetch('/api/models')
+      ]);
+      const agentsData = await agentsRes.json();
+      const modelsData = await modelsRes.json();
+      setAgents(agentsData);
+      setLlmModels(modelsData.filter(m => m.type === 'llm'));
+      setEmbeddingModels(modelsData.filter(m => m.type === 'embedding'));
+    } catch (err) {
+      console.error('Error fetching models or agents:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchData(); }, []);
+
+  const handleEdit = (agent) => {
+    setEditingAgent(agent);
+    setSelectedLlmId(agent.llm_model_id || '');
+    setSelectedEmbeddingId(agent.embedding_model_id || '');
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    if (!editingAgent) return;
+    try {
+      const response = await fetch(`/api/agents/${editingAgent.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ llm_model_id: selectedLlmId || null, embedding_model_id: selectedEmbeddingId || null })
+      });
+      if (response.ok) {
+        const updatedAgent = await response.json();
+        setAgents(agents.map(a => a.id === updatedAgent.id ? updatedAgent : a));
+        setEditingAgent(null);
+      } else {
+        alert('Error al actualizar el agente');
+      }
+    } catch (err) {
+      console.error('Error in agent PUT:', err);
+    }
+  };
+
+
+  return (
+    <div className="fade-in">
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2.5rem', alignItems: 'center' }}>
+        <div>
+          <h1 style={{ fontSize: '1.75rem', fontWeight: 800, letterSpacing: '-0.025em' }}>Agents</h1>
+          <p style={{ color: '#64748b', fontSize: '0.95rem', marginTop: '0.25rem' }}>Ver y configurar los agentes autónomos del sistema.</p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <button 
+            onClick={fetchData}
+            className="btn-secondary"
+            title="Sincronizar"
+            style={{ padding: '0.625rem' }}
+          >
+            <RefreshCcw size={18} className={loading && agents.length > 0 ? 'animate-spin' : ''} />
+          </button>
+        </div>
+      </div>
+
+      {loading && agents.length === 0 ? (
+        <div style={{ padding: '4rem', textAlign: 'center', color: '#64748b' }}>
+          <div className="animate-pulse">Cargando orquestador...</div>
+        </div>
+      ) : agents.length === 0 ? (
+        <div className="card" style={{ padding: '4rem', textAlign: 'center', borderStyle: 'dashed', background: 'transparent' }}>
+          <div style={{ background: '#eff6ff', width: '64px', height: '64px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
+             <User size={32} color="#3b82f6" />
+          </div>
+          <h3 style={{ fontSize: '1.125rem', fontWeight: 600, color: '#1e293b' }}>No agents detected</h3>
+          <p style={{ color: '#64748b', marginTop: '0.5rem' }}>Los programadores deben inicializar los agentes en la base de datos.</p>
+        </div>
+      ) : (
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', 
+          gap: '1.5rem'
+        }}>
+          {agents.map((agent) => (
+            <div key={agent.id} className="card model-card" style={{ display: 'flex', flexDirection: 'column' }}>
+              <div className="model-header" style={{ marginBottom: '1rem', borderBottom: 'none' }}>
+                <div style={{ width: 48, height: 48, backgroundColor: '#eff6ff', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <User size={24} color="#3b82f6" />
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button 
+                    onClick={() => handleEdit(agent)}
+                    title="Settings" 
+                    className="btn-icon"
+                    style={{ background: '#f8fafc' }}
+                  >
+                    <Settings size={16} />
+                  </button>
+                  <button 
+                    title="Run" 
+                    className="btn-icon"
+                    style={{ background: '#f8fafc', color: '#10b981' }}
+                  >
+                    <Play size={16} />
+                  </button>
+                </div>
+              </div>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a', marginBottom: '0.25rem' }}>{agent.name}</h3>
+              <p style={{ fontSize: '0.875rem', color: '#64748b', marginBottom: '1rem', flex: 1 }}>{agent.description}</p>
+              
+              <div style={{ backgroundColor: '#f8fafc', padding: '1rem', borderRadius: '8px', marginBottom: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div>
+                  <p style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '0.25rem' }}>LLM Model</p>
+                  {agent.llm_model_name ? (
+                    <p style={{ fontSize: '0.875rem', color: '#1e293b', fontWeight: 500 }}>{agent.llm_model_name} <span style={{ color: '#64748b', fontSize: '0.8rem' }}>({agent.model_identifier})</span></p>
+                  ) : (
+                    <p style={{ fontSize: '0.875rem', color: '#ef4444', fontStyle: 'italic' }}>Not assigned</p>
+                  )}
+                </div>
+                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '0.75rem' }}>
+                  <p style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Embedding Model</p>
+                  {agent.embedding_model_name ? (
+                    <p style={{ fontSize: '0.875rem', color: '#1e293b', fontWeight: 500 }}>{agent.embedding_model_name} <span style={{ color: '#64748b', fontSize: '0.8rem' }}>({agent.embedding_model_identifier})</span></p>
+                  ) : (
+                    <p style={{ fontSize: '0.875rem', color: '#f59e0b', fontStyle: 'italic' }}>Not assigned</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Settings Modal */}
+      {editingAgent && (
+        <div className="modal-overlay fade-in" style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.5)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100
+        }}>
+          <div className="modal-content" style={{ width: '100%', maxWidth: '500px', background: 'white', borderRadius: '16px', padding: '2rem', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Agent Configuration</h2>
+              <button 
+                onClick={() => setEditingAgent(null)}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#64748b', padding: '0.5rem' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                <div className="form-group">
+                    <label>Agent Name</label>
+                    <input type="text" className="form-control" value={editingAgent.name} disabled style={{ backgroundColor: '#f1f5f9', color: '#94a3b8' }} />
+                </div>
+                
+                <div className="form-group">
+                    <label>LLM Model</label>
+                    <select 
+                        className="form-control" 
+                        value={selectedLlmId} 
+                        onChange={(e) => setSelectedLlmId(e.target.value)}
+                    >
+                        <option value="">— None —</option>
+                        {llmModels.map(m => (
+                            <option key={m.id} value={m.id}>{m.name} ({m.provider_name})</option>
+                        ))}
+                    </select>
+                </div>
+
+                <div className="form-group">
+                    <label>Embedding Model</label>
+                    <select 
+                        className="form-control" 
+                        value={selectedEmbeddingId} 
+                        onChange={(e) => setSelectedEmbeddingId(e.target.value)}
+                    >
+                        <option value="">— None —</option>
+                        {embeddingModels.map(m => (
+                            <option key={m.id} value={m.id}>{m.name} ({m.provider_name})</option>
+                        ))}
+                    </select>
+                </div>
+                
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1rem' }}>
+                    <button type="button" className="btn-secondary" onClick={() => setEditingAgent(null)}>Cancel</button>
+                    <button type="submit" className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <Save size={18} /> Save Changes
+                    </button>
+                </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default Agents;
