@@ -153,7 +153,7 @@ const syncFlowiseChatflow = async (agentId) => {
     if (!flowiseUrl || !flowiseKey) return;
 
     try {
-        console.log(`SYNCCONTROL_NEWCODE for agent: ${agentId}`);
+        console.log(`Syncing Flowise Chatflow for agent: ${agentId}`);
 
         // 1. Obtener datos del agente y sus modelos (completos con credenciales)
         const agentRes = await db.query(`
@@ -185,38 +185,45 @@ const syncFlowiseChatflow = async (agentId) => {
             headers: { Authorization: `Bearer ${flowiseKey}` }
         });
 
-        let flowData = flowRes.data.flowData; // Esto es un JSON string (o un objeto si axios lo parseó, pero en Flowise suele ser stringified en el DB y objeto en el API)
-        // Nota: Flowise GET API devuelve flowData como objeto o string según la versión. Si es objeto, lo stringificamos.
-        let flowDataStr = typeof flowData === 'string' ? flowData : JSON.stringify(flowData);
+        // 4. Parsear flowData (puede venir como string o como objeto)
+        let flowData = flowRes.data.flowData;
+        let flowObj = typeof flowData === 'string' ? JSON.parse(flowData) : flowData;
 
-        // 4. Aplicar reemplazos según patrones del usuario (soportando comillas escapadas \")
-        // Modelo de lenguaje
-        if (agent.llm_id) {
-            // Nota: El regex busca el patrón exacto provisto por el usuario, manejando las comillas escapadas
-            const llmPattern = /(\{\{inMemoryCache_0\.data\.instance\}\}\\",\\"modelName\\":\\")[^"]+(\\")/g;
-            flowDataStr = flowDataStr.replace(llmPattern, `$1${agent.llm_id}$2`);
-            
-            if (agent.llm_cred) {
-                const credPattern = /(\\"BaseLanguageModel\\",\\"Runnable\\"\\],\\"credential\\":\\")[^"]+(\\")/g;
-                flowDataStr = flowDataStr.replace(credPattern, `$1${agent.llm_cred}$2`);
-            }
+        // 5. Actualizar nodos de forma robusta
+        if (flowObj && flowObj.nodes) {
+            flowObj.nodes.forEach(node => {
+                const category = node.data?.category;
+                const nodeName = node.data?.name || '';
+                
+                // Actualizar LLM (Chat Models)
+                if (agent.llm_id && (category === 'Chat Models' || nodeName.toLowerCase().includes('chat') || nodeName.toLowerCase().includes('gpt'))) {
+                    if (node.data.inputs) {
+                        node.data.inputs.modelName = agent.llm_id;
+                    }
+                    if (agent.llm_cred) {
+                        node.data.credential = agent.llm_cred;
+                    }
+                }
+
+                // Actualizar Embedding
+                if (agent.emb_id && (category === 'Embeddings' || nodeName.toLowerCase().includes('embedding'))) {
+                    if (node.data.inputs) {
+                        node.data.inputs.modelName = agent.emb_id;
+                    }
+                    if (agent.emb_cred) {
+                        node.data.credential = agent.emb_cred;
+                    }
+                }
+            });
         }
 
-        // Modelo de embedding
-        if (agent.emb_id) {
-            const embPattern = /(\\"inputs\\":{\\"modelName\\":\\")[^"]+(\\")/g;
-            flowDataStr = flowDataStr.replace(embPattern, `$1${agent.emb_id}$2`);
+        // 6. Volver a stringificar si originalmente era un string para mantener compatibilidad
+        const updatedFlowData = typeof flowData === 'string' ? JSON.stringify(flowObj) : flowObj;
 
-            if (agent.emb_cred) {
-                const credPattern = /(\\"Embeddings\\"\\],\\"credential\\":\\")[^"]+(\\")/g;
-                flowDataStr = flowDataStr.replace(credPattern, `$1${agent.emb_cred}$2`);
-            }
-        }
-
-        // 5. Actualizar en Flowise
+        // 7. Actualizar en Flowise
         const updatePayload = {
             name: `agentplatform - ${agent.name}`,
-            flowData: flowDataStr
+            flowData: updatedFlowData
         };
 
         await axios.put(`${flowiseUrl}/api/v1/chatflows/${chatflowId}`, updatePayload, {
@@ -230,7 +237,6 @@ const syncFlowiseChatflow = async (agentId) => {
 
     } catch (err) {
         console.error('Error syncing Chatflow to Flowise:', err.response?.data || err.message);
-        // Silencioso para no romper flujo principal
     }
 };
 
