@@ -16,6 +16,29 @@ const Dashboard = () => {
     fetchCounts();
   }, []);
 
+  // Inyección del Chatbot de Flowise
+  useEffect(() => {
+    if (!document.getElementById('flowise-bot-script')) {
+      const script = document.createElement('script');
+      script.id = 'flowise-bot-script';
+      script.type = 'module';
+      script.innerHTML = `
+        import Chatbot from "https://cdn.jsdelivr.net/npm/flowise-embed/dist/web.js"
+        Chatbot.init({
+            chatflowid: "b244aafa-1c35-4c3a-a5e2-01811679cb4c",
+            apiHost: "https://dev.flowise.erpconsultingsap.com",
+        })
+      `;
+      document.body.appendChild(script);
+    }
+    
+    // Cleanup opcional al desmontar el Dashboard (la burbuja podría persistir si no cerramos instancia, 
+    // pero evitamos inyectar el script repetidas veces).
+    return () => {
+      // Si el componente de la burbuja nativo expone métodos de destroy o el shadow DOM es limpiable, se haría aquí.
+    };
+  }, []);
+
   const stats = [
     { title: 'Total Agents', value: counts.agents.toString() },
     { title: 'Models Configured', value: counts.llms.toString() },

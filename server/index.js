@@ -8,6 +8,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import db from './db/index.js';
 import { encrypt } from './utils/encryption.js';
+import { FLOWISE_TEMPLATES } from './utils/flowiseTemplates.js';
 
 dotenv.config();
 
@@ -146,6 +147,55 @@ const deleteFlowiseCredential = async (flowiseId) => {
     }
 };
 
+const transformNode = (node, type, providerName, modelIdentifier, credentialId, edges) => {
+    if (!providerName) return;
+    const provider = (providerName.toLowerCase().includes('google') || providerName.toLowerCase().includes('gemini')) ? 'google' : 'openai';
+    const template = FLOWISE_TEMPLATES[type][provider];
+
+    if (!template) return;
+
+    console.log(`Transforming node ${node.data.id} (${node.data.type}) to ${template.type} using provider ${provider}`);
+
+    const currentId = node.data.id;
+    const oldInputs = node.data.inputs || {};
+
+    // Clonar plantilla inyectando el ID actual para mantener coherencia interna de anclas
+    const templateStr = JSON.stringify(template).replace(/{{NODE_ID}}/g, currentId);
+    const newTemplate = JSON.parse(templateStr);
+
+    const newInputs = { ...newTemplate.inputs };
+    
+    // Conservar cables entrantes conectados a variables (ej. cache="{{inMemoryCache_0.data.instance}}")
+    Object.keys(oldInputs).forEach(key => {
+        if (key in newInputs && typeof oldInputs[key] === 'string' && oldInputs[key].includes('{{')) {
+            newInputs[key] = oldInputs[key];
+        }
+    });
+
+    node.data = {
+        ...newTemplate,
+        id: currentId,
+        inputs: {
+            ...newInputs,
+            modelName: modelIdentifier
+        },
+        credential: credentialId
+    };
+
+    // Flowise espera que la envoltura superior sea customNode
+    node.type = 'customNode';
+
+    // Asegurar que si el nodo mutado tiene otro ID de ancla de salida, los cables apunten hacia dicho ID
+    if (edges && Array.isArray(edges) && newTemplate.outputAnchors && newTemplate.outputAnchors.length > 0) {
+        const newOutputAnchorId = newTemplate.outputAnchors[0].id;
+        edges.forEach(edge => {
+            if (edge.source === currentId) {
+                edge.sourceHandle = newOutputAnchorId;
+            }
+        });
+    }
+};
+
 const syncFlowiseChatflow = async (agentId) => {
     const flowiseUrl = process.env.FLOWISE_API_URL;
     const flowiseKey = process.env.FLOWISE_API_KEY;
@@ -158,8 +208,8 @@ const syncFlowiseChatflow = async (agentId) => {
         // 1. Obtener datos del agente y sus modelos (completos con credenciales)
         const agentRes = await db.query(`
             SELECT a.name, a.llm_model_id, a.embedding_model_id,
-                   llm.model_identifier as llm_id, p_llm.flowise_credential_id as llm_cred,
-                   emb.model_identifier as emb_id, p_emb.flowise_credential_id as emb_cred
+                   llm.model_identifier as llm_id, p_llm.flowise_credential_id as llm_cred, p_llm.name as llm_provider,
+                   emb.model_identifier as emb_id, p_emb.flowise_credential_id as emb_cred, p_emb.name as emb_provider
             FROM desarrollo.agents a
             LEFT JOIN desarrollo.models llm ON a.llm_model_id = llm.id
             LEFT JOIN desarrollo.providers p_llm ON llm.provider_id = p_llm.id
@@ -194,31 +244,33 @@ const syncFlowiseChatflow = async (agentId) => {
             flowObj.nodes.forEach(node => {
                 const category = node.data?.category;
                 const nodeName = node.data?.name || '';
+                const nodeType = node.data?.type || '';
                 
                 // Actualizar LLM (Chat Models)
-                if (agent.llm_id && (category === 'Chat Models' || nodeName.toLowerCase().includes('chat') || nodeName.toLowerCase().includes('gpt'))) {
-                    if (node.data.inputs) {
-                        node.data.inputs.modelName = agent.llm_id;
-                    }
-                    if (agent.llm_cred) {
-                        node.data.credential = agent.llm_cred;
-                    }
+                // Detectamos por categoría o por nombres comunes
+                if (agent.llm_id && (
+                    category === 'Chat Models' || 
+                    nodeType.includes('ChatOpenAI') || 
+                    nodeType.includes('ChatGoogleGenerativeAI') ||
+                    nodeName.toLowerCase().includes('chat')
+                )) {
+                    transformNode(node, 'llm', agent.llm_provider, agent.llm_id, agent.llm_cred, flowObj.edges);
                 }
 
                 // Actualizar Embedding
-                if (agent.emb_id && (category === 'Embeddings' || nodeName.toLowerCase().includes('embedding'))) {
-                    if (node.data.inputs) {
-                        node.data.inputs.modelName = agent.emb_id;
-                    }
-                    if (agent.emb_cred) {
-                        node.data.credential = agent.emb_cred;
-                    }
+                if (agent.emb_id && (
+                    category === 'Embeddings' || 
+                    nodeType.includes('OpenAIEmbeddings') || 
+                    nodeType.includes('GoogleGenerativeAIEmbeddings') ||
+                    nodeName.toLowerCase().includes('embedding')
+                )) {
+                    transformNode(node, 'embedding', agent.emb_provider, agent.emb_id, agent.emb_cred, flowObj.edges);
                 }
             });
         }
 
-        // 6. Volver a stringificar si originalmente era un string para mantener compatibilidad
-        const updatedFlowData = typeof flowData === 'string' ? JSON.stringify(flowObj) : flowObj;
+        // 6. Volver a stringificar SIEMPRE, ya que la API de Flowise exige que flowData sea un string
+        const updatedFlowData = JSON.stringify(flowObj);
 
         // 7. Actualizar en Flowise
         const updatePayload = {
