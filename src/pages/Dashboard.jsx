@@ -16,27 +16,50 @@ const Dashboard = () => {
     fetchCounts();
   }, []);
 
-  // Inyección del Chatbot de Flowise
+  // Inyección / Destrucción de la burbuja nativa del Chatbot de Flowise
   useEffect(() => {
-    if (!document.getElementById('flowise-bot-script')) {
-      const script = document.createElement('script');
-      script.id = 'flowise-bot-script';
-      script.type = 'module';
-      script.innerHTML = `
-        import Chatbot from "https://cdn.jsdelivr.net/npm/flowise-embed/dist/web.js"
-        Chatbot.init({
-            chatflowid: "b244aafa-1c35-4c3a-a5e2-01811679cb4c",
-            apiHost: "https://dev.flowise.erpconsultingsap.com",
-        })
-      `;
-      document.body.appendChild(script);
-    }
-    
-    // Cleanup opcional al desmontar el Dashboard (la burbuja podría persistir si no cerramos instancia, 
-    // pero evitamos inyectar el script repetidas veces).
-    return () => {
-      // Si el componente de la burbuja nativo expone métodos de destroy o el shadow DOM es limpiable, se haría aquí.
+    const manageChatbot = async () => {
+      try {
+        const agRes = await fetch('/api/agents');
+        const agents = await agRes.json();
+        // El usuario está apuntando a este chatflow ('Chat Flowise'), asumimos que buscamos este nodo
+        const targetAgent = agents.find(a => a.name === "Chat Flowise") || agents[0];
+        
+        const isBotActive = targetAgent && targetAgent.is_active !== false;
+
+        if (isBotActive) {
+          // Si está encendido y el script no existe, inicializarlo de cero.
+          if (!document.getElementById('flowise-bot-script')) {
+            const script = document.createElement('script');
+            script.id = 'flowise-bot-script';
+            script.type = 'module';
+            script.innerHTML = `
+              import Chatbot from "https://cdn.jsdelivr.net/npm/flowise-embed/dist/web.js"
+              Chatbot.init({
+                  chatflowid: "b244aafa-1c35-4c3a-a5e2-01811679cb4c",
+                  apiHost: "https://dev.flowise.erpconsultingsap.com",
+              })
+            `;
+            document.body.appendChild(script);
+          } else {
+             // Si el script ya está inyectado de un montaje anterior, solo asegurarnos 
+             // de encender la visibilidad DOM del elemento shadow <flowise-chatbot>
+             const botNode = document.querySelector('flowise-chatbot');
+             if (botNode) botNode.style.display = 'block';
+          }
+        } else {
+          // Si el agente se apagó, forzamos la desaparición visual del DOM sin que explote.
+          const botNode = document.querySelector('flowise-chatbot');
+          if (botNode) botNode.style.display = 'none';
+        }
+      } catch (error) {
+        console.error(error);
+      }
     };
+
+    manageChatbot();
+
+    return () => {};
   }, []);
 
   const stats = [

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, Play, Settings, RefreshCcw, Save, X } from 'lucide-react';
+import { User, Play, Square, Settings, RefreshCcw, Save, X } from 'lucide-react';
 
 const Agents = () => {
   const [agents, setAgents] = useState([]);
@@ -58,6 +58,31 @@ const Agents = () => {
     }
   };
 
+  const handleToggleActive = async (agent) => {
+    try {
+      const response = await fetch(`/api/agents/${agent.id}/toggle`, {
+        method: 'PUT',
+      });
+      if (response.ok) {
+        const updatedAgent = await response.json();
+        setAgents(agents.map(a => a.id === updatedAgent.id ? updatedAgent : a));
+        
+        // Si el agente acaba de apagarse, forzamos la recarga del DOM (Web Completa) 
+        // para así despachar al 100% cualquier residuo de la burbuja de Flowise que haya en Memoria Root
+        if (updatedAgent.is_active === false) {
+          setTimeout(() => {
+            window.location.reload();
+          }, 400); // pequeña pausa para apreciar el refresh
+        }
+      } else {
+        alert('Error al cambiar el estado del agente');
+      }
+    } catch (err) {
+      console.error('Error en toggle agent:', err);
+    }
+  };
+
+
 
   return (
     <div className="fade-in">
@@ -97,7 +122,13 @@ const Agents = () => {
           gap: '1.5rem'
         }}>
           {agents.map((agent) => (
-            <div key={agent.id} className="card model-card" style={{ display: 'flex', flexDirection: 'column' }}>
+            <div key={agent.id} className="card model-card" style={{ 
+              display: 'flex', 
+              flexDirection: 'column',
+              backgroundColor: agent.is_active === false ? '#f1f5f9' : '#ffffff',
+              border: agent.is_active === false ? '1px dashed #94a3b8' : '1px solid #e2e8f0',
+              transition: 'all 0.3s ease'
+            }}>
               <div className="model-header" style={{ marginBottom: '1rem', borderBottom: 'none' }}>
                 <div style={{ width: 48, height: 48, backgroundColor: '#eff6ff', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <User size={24} color="#3b82f6" />
@@ -112,15 +143,21 @@ const Agents = () => {
                     <Settings size={16} />
                   </button>
                   <button 
-                    title="Run" 
+                    title={agent.is_active === false ? "Start Agent" : "Stop Agent"} 
                     className="btn-icon"
-                    style={{ background: '#f8fafc', color: '#10b981' }}
+                    onClick={() => handleToggleActive(agent)}
+                    style={{ 
+                      background: '#f8fafc', 
+                      color: agent.is_active === false ? '#10b981' : '#ef4444' 
+                    }}
                   >
-                    <Play size={16} />
+                    {agent.is_active === false ? <Play size={16} /> : <Square size={16} fill="currentColor" />}
                   </button>
                 </div>
               </div>
-              <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a', marginBottom: '0.25rem' }}>{agent.name}</h3>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: agent.is_active === false ? '#94a3b8' : '#0f172a', marginBottom: '0.25rem' }}>
+                {agent.name} {agent.is_active === false && "(Detenido)"}
+              </h3>
               <p style={{ fontSize: '0.875rem', color: '#64748b', marginBottom: '1rem', flex: 1 }}>{agent.description}</p>
               
               <div style={{ backgroundColor: '#f8fafc', padding: '1rem', borderRadius: '8px', marginBottom: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>

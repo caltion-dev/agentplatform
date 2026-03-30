@@ -207,7 +207,7 @@ const syncFlowiseChatflow = async (agentId) => {
 
         // 1. Obtener datos del agente y sus modelos (completos con credenciales)
         const agentRes = await db.query(`
-            SELECT a.name, a.llm_model_id, a.embedding_model_id,
+            SELECT a.name, a.is_active, a.llm_model_id, a.embedding_model_id,
                    llm.model_identifier as llm_id, p_llm.flowise_credential_id as llm_cred, p_llm.name as llm_provider,
                    emb.model_identifier as emb_id, p_emb.flowise_credential_id as emb_cred, p_emb.name as emb_provider
             FROM desarrollo.agents a
@@ -272,10 +272,20 @@ const syncFlowiseChatflow = async (agentId) => {
         // 6. Volver a stringificar SIEMPRE, ya que la API de Flowise exige que flowData sea un string
         const updatedFlowData = JSON.stringify(flowObj);
 
-        // 7. Actualizar en Flowise
+        // 7. Configurar apiConfig de Flowise para apagar/encender la API del chatflow según is_active
+        let apiConfigObj = flowRes.data.apiConfig 
+            ? (typeof flowRes.data.apiConfig === 'string' ? JSON.parse(flowRes.data.apiConfig) : flowRes.data.apiConfig) 
+            : {};
+        
+        if (!apiConfigObj.overrideConfig) apiConfigObj.overrideConfig = {};
+        // Si is_active es false, status de Flowise será false (apaga la API)
+        apiConfigObj.overrideConfig.status = agent.is_active === true;
+
         const updatePayload = {
             name: `agentplatform - ${agent.name}`,
-            flowData: updatedFlowData
+            flowData: updatedFlowData,
+            apiConfig: JSON.stringify(apiConfigObj),
+            isPublic: agent.is_active === true
         };
 
         await axios.put(`${flowiseUrl}/api/v1/chatflows/${chatflowId}`, updatePayload, {
@@ -502,7 +512,7 @@ app.get('/api/agents', async (req, res) => {
     console.log('GET /api/agents');
     try {
         const { rows } = await db.query(`
-            SELECT a.id, a.name, a.description, a.system_prompt, a.config,
+            SELECT a.id, a.name, a.description, a.system_prompt, a.config, a.is_active,
                    a.llm_model_id, llm.name as llm_model_name, llm.model_identifier,
                    a.embedding_model_id, emb.name as embedding_model_name, emb.model_identifier as embedding_model_identifier
             FROM desarrollo.agents a
@@ -536,7 +546,7 @@ app.put('/api/agents/:id', async (req, res) => {
         }
 
         const { rows } = await db.query(`
-            SELECT a.id, a.name, a.description, a.system_prompt, a.config,
+            SELECT a.id, a.name, a.description, a.system_prompt, a.config, a.is_active,
                    a.llm_model_id, llm.name as llm_model_name, llm.model_identifier,
                    a.embedding_model_id, emb.name as embedding_model_name, emb.model_identifier as embedding_model_identifier
             FROM desarrollo.agents a
@@ -552,6 +562,44 @@ app.put('/api/agents/:id', async (req, res) => {
     } catch (err) {
         console.error('Error en PUT /api/agents:', err);
         res.status(500).json({ error: 'Error al actualizar el agente' });
+    }
+});
+
+// PUT /api/agents/:id/toggle - Encender o Apagar el agente
+app.put('/api/agents/:id/toggle', async (req, res) => {
+    const { id } = req.params;
+    console.log(`PUT /api/agents/${id}/toggle`);
+
+    try {
+        const result = await db.query(
+            `UPDATE desarrollo.agents 
+             SET is_active = NOT COALESCE(is_active, true), updated_at = NOW() 
+             WHERE id = $1 RETURNING *`,
+            [id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Agente no encontrado' });
+        }
+
+        const { rows } = await db.query(`
+            SELECT a.id, a.name, a.description, a.system_prompt, a.config, a.is_active,
+                   a.llm_model_id, llm.name as llm_model_name, llm.model_identifier,
+                   a.embedding_model_id, emb.name as embedding_model_name, emb.model_identifier as embedding_model_identifier
+            FROM desarrollo.agents a
+            LEFT JOIN desarrollo.models llm ON a.llm_model_id = llm.id
+            LEFT JOIN desarrollo.models emb ON a.embedding_model_id = emb.id
+            WHERE a.id = $1
+        `, [id]);
+
+        const agent = rows[0];
+        res.json(agent);
+
+        // Disparar sincronización para apagar/prender el chatflow
+        syncFlowiseChatflow(id).catch(console.error);
+    } catch (err) {
+        console.error('Error en PUT /api/agents/:id/toggle:', err);
+        res.status(500).json({ error: 'Error al cambiar estado del agente' });
     }
 });
 
