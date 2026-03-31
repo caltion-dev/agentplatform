@@ -530,15 +530,15 @@ app.get('/api/agents', async (req, res) => {
 // PUT /api/agents/:id - Actualizar la configuración del agente (LLM + Embedding)
 app.put('/api/agents/:id', async (req, res) => {
     const { id } = req.params;
-    const { llm_model_id, embedding_model_id } = req.body;
-    console.log(`PUT /api/agents/${id}`, { llm_model_id, embedding_model_id });
+    const { llm_model_id, embedding_model_id, system_prompt } = req.body;
+    console.log(`PUT /api/agents/${id}`, { llm_model_id, embedding_model_id, system_prompt: !!system_prompt });
 
     try {
         const result = await db.query(
             `UPDATE desarrollo.agents 
-             SET llm_model_id = $1, embedding_model_id = $2, updated_at = NOW() 
-             WHERE id = $3 RETURNING *`,
-            [llm_model_id || null, embedding_model_id || null, id]
+             SET llm_model_id = $1, embedding_model_id = $2, system_prompt = $3, updated_at = NOW() 
+             WHERE id = $4 RETURNING *`,
+            [llm_model_id || null, embedding_model_id || null, system_prompt || null, id]
         );
 
         if (result.rows.length === 0) {

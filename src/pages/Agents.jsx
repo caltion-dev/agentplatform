@@ -9,6 +9,8 @@ const Agents = () => {
   const [editingAgent, setEditingAgent] = useState(null);
   const [selectedLlmId, setSelectedLlmId] = useState('');
   const [selectedEmbeddingId, setSelectedEmbeddingId] = useState('');
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [activeTab, setActiveTab] = useState('general'); // 'general' | 'prompt'
 
   const fetchData = async () => {
     setLoading(true);
@@ -35,6 +37,8 @@ const Agents = () => {
     setEditingAgent(agent);
     setSelectedLlmId(agent.llm_model_id || '');
     setSelectedEmbeddingId(agent.embedding_model_id || '');
+    setSystemPrompt(agent.system_prompt || '');
+    setActiveTab('general');
   };
 
   const handleSave = async (e) => {
@@ -44,7 +48,11 @@ const Agents = () => {
       const response = await fetch(`/api/agents/${editingAgent.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ llm_model_id: selectedLlmId || null, embedding_model_id: selectedEmbeddingId || null })
+        body: JSON.stringify({ 
+          llm_model_id: selectedLlmId || null, 
+          embedding_model_id: selectedEmbeddingId || null,
+          system_prompt: systemPrompt
+        })
       });
       if (response.ok) {
         const updatedAgent = await response.json();
@@ -201,39 +209,92 @@ const Agents = () => {
               </button>
             </div>
             
+            <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0', marginBottom: '1.5rem', gap: '1.5rem' }}>
+                <button 
+                    type="button"
+                    onClick={() => setActiveTab('general')}
+                    style={{ 
+                        padding: '0.5rem 0',
+                        fontSize: '0.875rem',
+                        borderBottom: activeTab === 'general' ? '2px solid #3b82f6' : '2px solid transparent',
+                        color: activeTab === 'general' ? '#3b82f6' : '#64748b',
+                        fontWeight: activeTab === 'general' ? 600 : 400,
+                        background: 'transparent',
+                        borderLeft: 'none', borderTop: 'none', borderRight: 'none',
+                        cursor: 'pointer'
+                    }}
+                >
+                    General
+                </button>
+                <button 
+                    type="button"
+                    onClick={() => setActiveTab('prompt')}
+                    style={{ 
+                        padding: '0.5rem 0',
+                        fontSize: '0.875rem',
+                        borderBottom: activeTab === 'prompt' ? '2px solid #3b82f6' : '2px solid transparent',
+                        color: activeTab === 'prompt' ? '#3b82f6' : '#64748b',
+                        fontWeight: activeTab === 'prompt' ? 600 : 400,
+                        background: 'transparent',
+                        borderLeft: 'none', borderTop: 'none', borderRight: 'none',
+                        cursor: 'pointer'
+                    }}
+                >
+                    System Prompt
+                </button>
+            </div>
+            
             <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                <div className="form-group">
-                    <label>Agent Name</label>
-                    <input type="text" className="form-control" value={editingAgent.name} disabled style={{ backgroundColor: '#f1f5f9', color: '#94a3b8' }} />
-                </div>
-                
-                <div className="form-group">
-                    <label>LLM Model</label>
-                    <select 
-                        className="form-control" 
-                        value={selectedLlmId} 
-                        onChange={(e) => setSelectedLlmId(e.target.value)}
-                    >
-                        <option value="">— None —</option>
-                        {llmModels.map(m => (
-                            <option key={m.id} value={m.id}>{m.name} ({m.provider_name})</option>
-                        ))}
-                    </select>
-                </div>
+                {activeTab === 'general' ? (
+                    <>
+                        <div className="form-group">
+                            <label>Agent Name</label>
+                            <input type="text" className="form-control" value={editingAgent.name} disabled style={{ backgroundColor: '#f1f5f9', color: '#94a3b8' }} />
+                        </div>
+                        
+                        <div className="form-group">
+                            <label>LLM Model</label>
+                            <select 
+                                className="form-control" 
+                                value={selectedLlmId} 
+                                onChange={(e) => setSelectedLlmId(e.target.value)}
+                            >
+                                <option value="">— None —</option>
+                                {llmModels.map(m => (
+                                    <option key={m.id} value={m.id}>{m.name} ({m.provider_name})</option>
+                                ))}
+                            </select>
+                        </div>
 
-                <div className="form-group">
-                    <label>Embedding Model</label>
-                    <select 
-                        className="form-control" 
-                        value={selectedEmbeddingId} 
-                        onChange={(e) => setSelectedEmbeddingId(e.target.value)}
-                    >
-                        <option value="">— None —</option>
-                        {embeddingModels.map(m => (
-                            <option key={m.id} value={m.id}>{m.name} ({m.provider_name})</option>
-                        ))}
-                    </select>
-                </div>
+                        <div className="form-group">
+                            <label>Embedding Model</label>
+                            <select 
+                                className="form-control" 
+                                value={selectedEmbeddingId} 
+                                onChange={(e) => setSelectedEmbeddingId(e.target.value)}
+                            >
+                                <option value="">— None —</option>
+                                {embeddingModels.map(m => (
+                                    <option key={m.id} value={m.id}>{m.name} ({m.provider_name})</option>
+                                ))}
+                            </select>
+                        </div>
+                    </>
+                ) : (
+                    <div className="form-group">
+                        <label>Instructions & Behavior</label>
+                        <p style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.5rem' }}>
+                            Define aquí cómo debe comportarse el agente y qué reglas debe seguir.
+                        </p>
+                        <textarea 
+                            className="form-control" 
+                            style={{ minHeight: '260px', fontFamily: 'monospace', fontSize: '0.875rem', lineHeight: '1.5' }}
+                            value={systemPrompt}
+                            onChange={(e) => setSystemPrompt(e.target.value)}
+                            placeholder="Escribe el system prompt aquí..."
+                        ></textarea>
+                    </div>
+                )}
                 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1rem' }}>
                     <button type="button" className="btn-secondary" onClick={() => setEditingAgent(null)}>Cancel</button>

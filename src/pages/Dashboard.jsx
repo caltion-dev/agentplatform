@@ -22,13 +22,13 @@ const Dashboard = () => {
       try {
         const agRes = await fetch('/api/agents');
         const agents = await agRes.json();
-        // El usuario está apuntando a este chatflow ('Chat Flowise'), asumimos que buscamos este nodo
+        // Seleccionamos el agente (prioridad al que se llama "Chat Flowise" o el primero de la lista)
         const targetAgent = agents.find(a => a.name === "Chat Flowise") || agents[0];
         
         const isBotActive = targetAgent && targetAgent.is_active !== false;
+        const dynamicPrompt = targetAgent?.system_prompt || `Eres un asistente de IA útil y cordial.`;
 
         if (isBotActive) {
-          // Si está encendido y el script no existe, inicializarlo de cero.
           if (!document.getElementById('flowise-bot-script')) {
             const script = document.createElement('script');
             script.id = 'flowise-bot-script';
@@ -38,6 +38,9 @@ const Dashboard = () => {
               Chatbot.init({
                   chatflowid: "b244aafa-1c35-4c3a-a5e2-01811679cb4c",
                   apiHost: "https://dev.flowise.erpconsultingsap.com",
+                  chatflowConfig: {
+                      responsePrompt: \`${dynamicPrompt.replace(/`/g, '\\`').replace(/\${/g, '\\${')}\`
+                  }
               })
             `;
             document.body.appendChild(script);
