@@ -96,54 +96,292 @@ const syncFlowiseCredential = async (name, type, providerName, apiKey, existingF
 
     try {
         if (existingFlowiseId) {
-            console.log(`Updating credential in Flowise: ${existingFlowiseId} (${flowiseName})`);
-            // Para actualizar solo enviamos el name y plainDataObj según solicitado
-            const updatePayload = {
-                name: flowiseName,
-                plainDataObj: payload.plainDataObj
-            };
-            const response = await axios.put(`${flowiseUrl}/api/v1/credentials/${existingFlowiseId}`, updatePayload, {
-                headers: {
-                    Authorization: `Bearer ${flowiseKey}`,
-                    'Content-Type': 'application/json'
+            try {
+                console.log(`Updating credential in Flowise: ${existingFlowiseId} (${flowiseName})`);
+                const updatePayload = {
+                    name: flowiseName,
+                    plainDataObj: payload.plainDataObj
+                };
+                await axios.put(`${flowiseUrl}/api/v1/credentials/${existingFlowiseId}`, updatePayload, {
+                    headers: {
+                        Authorization: `Bearer ${flowiseKey}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                return existingFlowiseId;
+            } catch (updateErr) {
+                if (updateErr.response?.status === 404) {
+                    console.warn(`Credential ${existingFlowiseId} not found in Flowise. Re-creating...`);
+                } else {
+                    throw updateErr;
                 }
-            });
-            console.log('Flowise update response:', response.data);
-            return existingFlowiseId;
-        } else {
-            console.log(`Creating credential in Flowise: ${flowiseName} (${credentialName})`);
-            const response = await axios.post(`${flowiseUrl}/api/v1/credentials`, payload, {
-                headers: {
-                    Authorization: `Bearer ${flowiseKey}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-            console.log('Flowise create response:', response.data);
-            return response.data.id;
+            }
         }
+
+        console.log(`Creating credential in Flowise: ${flowiseName} (${credentialName})`);
+        const response = await axios.post(`${flowiseUrl}/api/v1/credentials`, payload, {
+            headers: {
+                Authorization: `Bearer ${flowiseKey}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        console.log('Flowise create response:', response.data);
+        return response.data.id;
     } catch (err) {
         console.error('Error syncing to Flowise:', err.response?.data || err.message);
         throw new Error('Error al sincronizar credencial con Flowise: ' + (err.response?.data?.message || err.message));
     }
 };
 
-const deleteFlowiseCredential = async (flowiseId) => {
-    const flowiseUrl = process.env.FLOWISE_API_URL;
-    const flowiseKey = process.env.FLOWISE_API_KEY;
+// --- n8n Helper ---
 
-    if (!flowiseUrl || !flowiseKey || !flowiseId) return;
+const syncN8nCredential = async (name, type, providerName, apiKey, existingN8nId = null) => {
+    const n8nUrl = process.env.N8N_API_URL;
+    const n8nKey = process.env.N8N_API_KEY;
+
+    if (!n8nUrl || !n8nKey) {
+        console.warn('n8n integration skipped: Missing N8N_API_URL or N8N_API_KEY in .env');
+        return;
+    }
+
+    const suffix = type === 'llm' ? '_LLM_agentplatform' : '_Embedding_agentplatform';
+    const n8nName = `${name}${suffix}`;
+    let credentialType = '';
+    
+    // Mapeo según el proveedor (Basado en requerimientos del usuario)
+    const normalizedProvider = providerName.toLowerCase();
+    if (normalizedProvider.includes('openai')) {
+        credentialType = 'openAiApi';
+    } else if (normalizedProvider.includes('google') || normalizedProvider.includes('gemini')) {
+        credentialType = 'googlePalmApi';
+    } else {
+        console.warn(`n8n integration skipped: Provider ${providerName} not supported in n8n yet.`);
+        return;
+    }
+
+    const payload = {
+        name: n8nName,
+        type: credentialType,
+        data: {}
+    };
+
+    // Configurar datos según el tipo de credencial en n8n
+    if (credentialType === 'openAiApi') {
+        payload.data = {
+            apiKey: apiKey,
+            headerName: "Authorization",
+            headerValue: "Bearer"
+        };
+    } else if (credentialType === 'googlePalmApi') {
+        payload.data = {
+            apiKey: apiKey,
+            host: "https://generativelanguage.googleapis.com"
+        };
+    }
 
     try {
-        console.log(`Deleting credential from Flowise: ${flowiseId}`);
-        await axios.delete(`${flowiseUrl}/api/v1/credentials/${flowiseId}`, {
+        if (existingN8nId) {
+            try {
+                console.log(`Updating credential in n8n: ${existingN8nId} (${n8nName})`);
+                await axios.patch(`${n8nUrl}/credentials/${existingN8nId}`, payload, {
+                    headers: {
+                        'X-N8N-API-KEY': n8nKey,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                return existingN8nId;
+            } catch (updateErr) {
+                if (updateErr.response?.status === 404) {
+                    console.warn(`Credential ${existingN8nId} not found in n8n. Re-creating...`);
+                } else {
+                    throw updateErr;
+                }
+            }
+        }
+
+        console.log(`Creating credential in n8n: ${n8nName} (${credentialType})`);
+        const response = await axios.post(`${n8nUrl}/credentials`, payload, {
             headers: {
-                Authorization: `Bearer ${flowiseKey}`
+                'X-N8N-API-KEY': n8nKey,
+                'Content-Type': 'application/json'
             }
         });
-        console.log('Flowise credential deleted successfully');
+        console.log('n8n create response:', response.data);
+        return response.data.id;
     } catch (err) {
-        console.error('Error deleting from Flowise:', err.response?.data || err.message);
-        // No lanzamos error para no bloquear el borrado local, solo logueamos
+        console.error('Error syncing to n8n:', err.response?.data || err.message);
+        throw new Error('Error al sincronizar credencial con n8n: ' + (err.response?.data?.message || JSON.stringify(err.response?.data) || err.message));
+    }
+};
+
+const syncN8nWorkflow = async (workflowId, modelId) => {
+    const n8nUrl = process.env.N8N_API_URL;
+    const n8nKey = process.env.N8N_API_KEY;
+
+    if (!n8nUrl || !n8nKey || !workflowId || !modelId) return;
+
+    try {
+        // 1. Obtener detalles del modelo y su proveedor
+        const modelRes = await db.query(`
+            SELECT m.model_identifier, p.name as provider_name, p.n8n_credential_id 
+            FROM desarrollo.models m 
+            JOIN desarrollo.providers p ON m.provider_id = p.id 
+            WHERE m.id = $1
+        `, [modelId]);
+
+        if (modelRes.rows.length === 0) return;
+        const { model_identifier, provider_name, n8n_credential_id } = modelRes.rows[0];
+        console.log(`[n8n-sync] Model details: identifier=${model_identifier}, provider=${provider_name}, n8n_cred=${n8n_credential_id}`);
+
+        if (!n8n_credential_id) {
+            console.warn(`Sync n8n workflow skipped: Model ${modelId} has no n8n_credential_id`);
+            return;
+        }
+
+        // 2. Obtener el workflow de n8n
+        const wfRes = await axios.get(`${n8nUrl}/workflows/${workflowId}`, {
+            headers: { 'X-N8N-API-KEY': n8nKey }
+        });
+        const workflow = wfRes.data;
+
+        // 3. Buscar y actualizar nodos de IA
+        let modified = false;
+        const providerLower = provider_name.toLowerCase();
+        const isGoogle = providerLower.includes('google') || providerLower.includes('gemini');
+        
+        // n8n Node Types ACTUALIZADOS
+        const targetType = isGoogle ? '@n8n/n8n-nodes-langchain.lmChatGoogleGemini' : '@n8n/n8n-nodes-langchain.lmChatOpenAi';
+        const targetVersion = isGoogle ? 1 : 1.3;
+        const credKey = isGoogle ? 'googlePalmApi' : 'openAiApi';
+        
+        console.log(`[n8n-sync] isGoogle=${isGoogle}, targetType=${targetType}, targetVersion=${targetVersion}`);
+        
+        // --- LÓGICA DE IDENTIFICADOR DE MODELO ---
+        // Gemini necesita el prefijo 'models/' (requerido por n8n)
+        // OpenAI usa el identificador limpio tal como viene de la API
+        const formattedModel = isGoogle
+            ? (model_identifier.startsWith('models/') ? model_identifier : `models/${model_identifier}`)
+            : model_identifier;
+        
+        console.log(`[n8n-sync] formattedModel=${formattedModel} (original: ${model_identifier})`);
+        
+        // --- LÓGICA DE RECONEXIÓN INTELIGENTE ---
+        // Intentamos detectar si hay un orquestador que espera un nombre específico
+        let desiredNodeName = null;
+        const aiAgentNode = workflow.nodes.find(n => n.type.includes('aiAgent') || n.name === 'AI Agent');
+        
+        if (aiAgentNode && workflow.connections) {
+            // Buscamos quién alimenta al AI Agent por el puerto de modelo
+            for (const [sourceName, connections] of Object.entries(workflow.connections)) {
+                if (connections.ai_languageModel) {
+                    const isConnectedToAgent = connections.ai_languageModel.some(group => 
+                        group.some(c => c.node === aiAgentNode.name)
+                    );
+                    if (isConnectedToAgent) {
+                        desiredNodeName = sourceName;
+                        console.log(`Smart Connection: Detected that Agent expects node named "${desiredNodeName}"`);
+                        break;
+                    }
+                }
+            }
+        }
+
+        workflow.nodes = workflow.nodes.map(node => {
+            // Buscamos cualquier nodo de chat de LangChain (GoogleGemini, GooglePalm o OpenAi)
+            if (node.type.includes('lmChatOpenAi') || node.type.includes('lmChatGoogleGemini') || node.type.includes('lmChatGooglePalm')) {
+                
+                // Si detectamos un nombre deseado, lo aplicamos para NO romper la conexión
+                if (desiredNodeName) {
+                    node.name = desiredNodeName;
+                }
+
+                console.log(`Updating n8n node: ${node.name} (${node.type}) -> ${targetType}`);
+                
+                // TRANSFORMACIÓN TÉCNICA
+                node.type = targetType;
+                node.typeVersion = targetVersion;
+                
+                // Actualizar credenciales (Solo inyectamos la necesaria)
+                node.credentials = {
+                    [credKey]: {
+                        id: n8n_credential_id,
+                        name: `${provider_name}_agentplatform`
+                    }
+                };
+
+                // Actualizar modelo en parámetros
+                if (!node.parameters) node.parameters = {};
+                
+                // Limpiar posibles iteraciones previas
+                delete node.parameters.modelName; 
+                delete node.parameters.model;
+                
+                if (isGoogle) {
+                    // Gemini Chat Model (typeVersion: 1) usa "modelName" como un string simple (ej. "models/gemini-2.5-pro")
+                    node.parameters.modelName = formattedModel;
+                    console.log(`[n8n-sync] modelName set to simple string: ${formattedModel}`);
+                } else {
+                    // OpenAI usa "model" con formato __rl (Resource Locator) en typeVersion: 1.3
+                    node.parameters.model = {
+                        "__rl": true,
+                        "value": formattedModel,
+                        "mode": "list",
+                        "cachedResultName": formattedModel
+                    };
+                    console.log(`[n8n-sync] model.__rl set to: ${formattedModel}`);
+                }
+                
+                if (!node.parameters.options) node.parameters.options = {};
+
+                
+                modified = true;
+            }
+            return node;
+        });
+
+        if (modified) {
+            console.log(`Saving updated workflow to n8n: ${workflowId}`);
+            
+            // Limpieza del payload para evitar error: "settings must NOT have additional properties"
+            const minimalSettings = {};
+            if (workflow.settings?.executionOrder) minimalSettings.executionOrder = workflow.settings.executionOrder;
+            if (workflow.settings?.saveExecutionProgress) minimalSettings.saveExecutionProgress = workflow.settings.saveExecutionProgress;
+
+            const updatePayload = {
+                name: workflow.name,
+                nodes: workflow.nodes,
+                connections: workflow.connections,
+                settings: minimalSettings,
+                staticData: workflow.staticData
+            };
+
+            await axios.put(`${n8nUrl}/workflows/${workflowId}`, updatePayload, {
+                headers: { 
+                    'X-N8N-API-KEY': n8nKey,
+                    'Content-Type': 'application/json'
+                }
+            });
+            console.log('n8n workflow synced successfully');
+        }
+    } catch (err) {
+        console.error('Error syncing n8n workflow:', err.response?.data || err.message);
+    }
+};
+
+const deleteN8nCredential = async (n8nId) => {
+    const n8nUrl = process.env.N8N_API_URL;
+    const n8nKey = process.env.N8N_API_KEY;
+
+    if (!n8nUrl || !n8nKey || !n8nId) return;
+
+    try {
+        console.log(`Deleting credential from n8n: ${n8nId}`);
+        await axios.delete(`${n8nUrl}/credentials/${n8nId}`, {
+            headers: { 'X-N8N-API-KEY': n8nKey }
+        });
+        console.log('n8n credential deleted successfully');
+    } catch (err) {
+        console.error('Error deleting from n8n:', err.response?.data || err.message);
     }
 };
 
@@ -332,33 +570,37 @@ app.post('/api/models', async (req, res) => {
     try {
         // 1. Sincronizar con Flowise antes de guardar en DB local
         let flowiseCredentialId = null;
+        let n8nCredentialId = null;
         let providerId = null;
-        const providerRes = await db.query('SELECT id, flowise_credential_id FROM desarrollo.providers WHERE name = $1 AND type = $2', [provider_name, type]);
+        const providerRes = await db.query('SELECT id, flowise_credential_id, n8n_credential_id FROM desarrollo.providers WHERE name = $1 AND type = $2', [provider_name, type]);
         
         if (providerRes.rows.length > 0) {
             providerId = providerRes.rows[0].id;
             flowiseCredentialId = providerRes.rows[0].flowise_credential_id;
+            n8nCredentialId = providerRes.rows[0].n8n_credential_id;
         }
 
         try {
             // Si ya existe un flowise_credential_id en el proveedor, actualizamos en lugar de crear
             flowiseCredentialId = await syncFlowiseCredential(name, type, provider_name, api_key, flowiseCredentialId);
-        } catch (flowiseErr) {
-            console.error('Flowise Sync Failed:', flowiseErr.message);
-            return res.status(500).json({ error: flowiseErr.message });
+            // Sincronizar con n8n
+            n8nCredentialId = await syncN8nCredential(name, type, provider_name, api_key, n8nCredentialId);
+        } catch (syncErr) {
+            console.error('Sync Failed:', syncErr.message);
+            return res.status(500).json({ error: syncErr.message });
         }
 
         if (providerId) {
-            // Actualizar el provider existente con el nuevo Flowise ID
+            // Actualizar el provider existente con el nuevo Flowise e n8n ID
             await db.query(
-                'UPDATE desarrollo.providers SET api_key_encrypted = $1, flowise_credential_id = $2, updated_at = NOW() WHERE id = $3',
-                [encrypt(api_key), flowiseCredentialId, providerId]
+                'UPDATE desarrollo.providers SET api_key_encrypted = $1, flowise_credential_id = $2, n8n_credential_id = $3, updated_at = NOW() WHERE id = $4',
+                [encrypt(api_key), flowiseCredentialId, n8nCredentialId, providerId]
             );
         } else {
             console.log('Creating new provider:', provider_name, 'Type:', type);
             const newProvider = await db.query(
-                'INSERT INTO desarrollo.providers (name, type, api_key_encrypted, flowise_credential_id) VALUES ($1, $2, $3, $4) RETURNING id',
-                [provider_name, type, encrypt(api_key), flowiseCredentialId]
+                'INSERT INTO desarrollo.providers (name, type, api_key_encrypted, flowise_credential_id, n8n_credential_id) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+                [provider_name, type, encrypt(api_key), flowiseCredentialId, n8nCredentialId]
             );
             providerId = newProvider.rows[0].id;
         }
@@ -412,26 +654,29 @@ app.put('/api/models/:id', async (req, res) => {
             [name, model_identifier, type, providerId, id]
         );
 
-        // 3. Si se proporciona una nueva API Key, actualizar el proveedor y Flowise
+        // 3. Si se proporciona una nueva API Key, actualizar el proveedor y orquestadores
         if (api_key && api_key !== '••••••••••••••••') {
             console.log('Updating API Key for provider:', providerId);
 
-            // Recuperar el Flowise ID actual del proveedor antes de editar
-            const flowiseIdRes = await db.query('SELECT flowise_credential_id FROM desarrollo.providers WHERE id = $1', [providerId]);
-            const existingFlowiseId = flowiseIdRes.rows[0]?.flowise_credential_id;
+            // Recuperar IDs actuales del proveedor antes de editar
+            const credIdRes = await db.query('SELECT flowise_credential_id, n8n_credential_id FROM desarrollo.providers WHERE id = $1', [providerId]);
+            const existingFlowiseId = credIdRes.rows[0]?.flowise_credential_id;
+            const existingN8nId = credIdRes.rows[0]?.n8n_credential_id;
 
-            // Sincronizar con Flowise (Update si existe ID)
+            // Sincronizar orquestadores (Update si existe ID)
             let flowiseCredentialId = null;
+            let n8nCredentialId = null;
             try {
                 flowiseCredentialId = await syncFlowiseCredential(name, type, provider_name, api_key, existingFlowiseId);
-            } catch (flowiseErr) {
-                console.error('Flowise Sync Failed:', flowiseErr.message);
-                return res.status(500).json({ error: flowiseErr.message });
+                n8nCredentialId = await syncN8nCredential(name, type, provider_name, api_key, existingN8nId);
+            } catch (syncErr) {
+                console.error('Sync Failed:', syncErr.message);
+                return res.status(500).json({ error: syncErr.message });
             }
 
             await db.query(
-                'UPDATE desarrollo.providers SET api_key_encrypted = $1, flowise_credential_id = $2, updated_at = NOW() WHERE id = $3',
-                [encrypt(api_key), flowiseCredentialId, providerId]
+                'UPDATE desarrollo.providers SET api_key_encrypted = $1, flowise_credential_id = $2, n8n_credential_id = $3, updated_at = NOW() WHERE id = $4',
+                [encrypt(api_key), flowiseCredentialId, n8nCredentialId, providerId]
             );
         }
 
@@ -483,14 +728,14 @@ app.delete('/api/models/:id', async (req, res) => {
         if (parseInt(countRes.rows[0].count) === 0) {
             console.log('Cleaning up orphaned provider after deletion:', providerId);
             
-            // Obtener el Flowise ID antes de borrar el proveedor
-            const flowiseRes = await db.query('SELECT flowise_credential_id FROM desarrollo.providers WHERE id = $1', [providerId]);
-            const flowiseId = flowiseRes.rows[0]?.flowise_credential_id;
+            // Obtener IDs antes de borrar el proveedor
+            const credRes = await db.query('SELECT flowise_credential_id, n8n_credential_id FROM desarrollo.providers WHERE id = $1', [providerId]);
+            const flowiseId = credRes.rows[0]?.flowise_credential_id;
+            const n8nId = credRes.rows[0]?.n8n_credential_id;
 
-            // Borrar de Flowise
-            if (flowiseId) {
-                await deleteFlowiseCredential(flowiseId);
-            }
+            // Limpieza en orquestadores
+            if (flowiseId) await deleteFlowiseCredential(flowiseId);
+            if (n8nId) await deleteN8nCredential(n8nId);
 
             await db.query('DELETE FROM desarrollo.providers WHERE id = $1', [providerId]);
         }
@@ -512,11 +757,12 @@ app.get('/api/agents', async (req, res) => {
     console.log('GET /api/agents');
     try {
         const { rows } = await db.query(`
-            SELECT a.id, a.name, a.description, a.system_prompt, a.config, a.is_active,
-                   a.llm_model_id, llm.name as llm_model_name, llm.model_identifier,
+            SELECT a.id, a.name, a.description, a.system_prompt, a.config, a.is_active, a.n8n_workflow_id,
+                   a.llm_model_id, llm.name as llm_model_name, llm.model_identifier, p.name as provider_name,
                    a.embedding_model_id, emb.name as embedding_model_name, emb.model_identifier as embedding_model_identifier
             FROM desarrollo.agents a
             LEFT JOIN desarrollo.models llm ON a.llm_model_id = llm.id
+            LEFT JOIN desarrollo.providers p ON llm.provider_id = p.id
             LEFT JOIN desarrollo.models emb ON a.embedding_model_id = emb.id
             ORDER BY a.created_at DESC
         `);
@@ -530,23 +776,28 @@ app.get('/api/agents', async (req, res) => {
 // PUT /api/agents/:id - Actualizar la configuración del agente (LLM + Embedding)
 app.put('/api/agents/:id', async (req, res) => {
     const { id } = req.params;
-    const { llm_model_id, embedding_model_id, system_prompt } = req.body;
-    console.log(`PUT /api/agents/${id}`, { llm_model_id, embedding_model_id, system_prompt: !!system_prompt });
+    const { llm_model_id, embedding_model_id, system_prompt, n8n_workflow_id } = req.body;
+    console.log(`PUT /api/agents/${id}`, { llm_model_id, embedding_model_id, n8n_workflow_id, system_prompt: !!system_prompt });
 
     try {
         const result = await db.query(
             `UPDATE desarrollo.agents 
-             SET llm_model_id = $1, embedding_model_id = $2, system_prompt = $3, updated_at = NOW() 
-             WHERE id = $4 RETURNING *`,
-            [llm_model_id || null, embedding_model_id || null, system_prompt || null, id]
+             SET llm_model_id = $1, embedding_model_id = $2, system_prompt = $3,
+                 n8n_workflow_id = COALESCE($4::text, n8n_workflow_id),
+                 updated_at = NOW() 
+             WHERE id = $5 RETURNING *`,
+            [llm_model_id || null, embedding_model_id || null, system_prompt || null, n8n_workflow_id || null, id]
         );
 
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Agente no encontrado' });
         }
 
+        // Capturar el workflow_id real guardado (puede venir de DB si no se envió)
+        const savedWorkflowId = result.rows[0].n8n_workflow_id;
+
         const { rows } = await db.query(`
-            SELECT a.id, a.name, a.description, a.system_prompt, a.config, a.is_active,
+            SELECT a.id, a.name, a.description, a.system_prompt, a.config, a.is_active, a.n8n_workflow_id,
                    a.llm_model_id, llm.name as llm_model_name, llm.model_identifier,
                    a.embedding_model_id, emb.name as embedding_model_name, emb.model_identifier as embedding_model_identifier
             FROM desarrollo.agents a
@@ -557,8 +808,15 @@ app.put('/api/agents/:id', async (req, res) => {
 
         res.json(rows[0]);
 
-        // 3. Sincronizar en segundo plano con Flowise
+        // 3. Sincronizar en segundo plano con Flowise y n8n
         syncFlowiseChatflow(id).catch(console.error);
+        console.log(`[n8n-sync] Trigger check: savedWorkflowId=${savedWorkflowId}, llm_model_id=${llm_model_id}`);
+        if (savedWorkflowId && llm_model_id) {
+            console.log(`[n8n-sync] Triggering syncN8nWorkflow(${savedWorkflowId}, ${llm_model_id})`);
+            syncN8nWorkflow(savedWorkflowId, llm_model_id).catch(console.error);
+        } else {
+            console.warn(`[n8n-sync] SKIPPED: workflow=${savedWorkflowId}, model=${llm_model_id}`);
+        }
     } catch (err) {
         console.error('Error en PUT /api/agents:', err);
         res.status(500).json({ error: 'Error al actualizar el agente' });
@@ -743,6 +1001,57 @@ app.post('/api/chat/messages', async (req, res) => {
 // ==========================================
 // RUTAS PARA SAP (MOCK) & LOGS
 // ==========================================
+
+// GET /api/sap/test-data - Obtener datos de prueba para n8n
+app.get('/api/sap/test-data', (req, res) => {
+    const testData = [
+      {
+        "contacto_mail": "msanchez@beta-systems.es",
+        "contacto_empresa": "Beta Systems Corp",
+        "contacto_nombre": "Marta",
+        "contacto_apellido": "Sanchez",
+        "contanto_id": "10000005",
+        "factura": "18000005",
+        "BELNR_1": "8540",
+        "BLDAT_1": "7310",
+        "FAEDT_1": "701",
+        "DMBTR_1": "5626",
+        "DIAS_1": "9477",
+        "BELNR_2": "3749",
+        "BLDAT_2": "5459",
+        "FAEDT_2": "1226",
+        "DMBTR_2": "7453",
+        "DIAS_2": "1720",
+        "BANCO": "banco-6333",
+        "IBAN": "6500093918178",
+        "BIC": "3265",
+        "NIF_CLIENTE": "180009017449"
+      },
+      {
+        "contacto_mail": "cgomez@log-gamma.mx",
+        "contacto_empresa": "Logística Gamma",
+        "contacto_nombre": "Carlos",
+        "contacto_apellido": "Gomez",
+        "contanto_id": "10000006",
+        "factura": "18000002",
+        "BELNR_1": "9118",
+        "BLDAT_1": "592",
+        "FAEDT_1": "248",
+        "DMBTR_1": "2630",
+        "DIAS_1": "8408",
+        "BELNR_2": "7741",
+        "BLDAT_2": "737",
+        "FAEDT_2": "3835",
+        "DMBTR_2": "9445",
+        "DIAS_2": "9242",
+        "BANCO": "banco-4429",
+        "IBAN": "6500025147215",
+        "BIC": "4529",
+        "NIF_CLIENTE": "1800088141"
+      }
+    ];
+    res.json(testData);
+});
 
 // GET /api/sap/open-items - Consultar partidas abiertas (Filtro BSCHL 01/11)
 app.get('/api/sap/open-items', async (req, res) => {

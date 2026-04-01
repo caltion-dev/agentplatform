@@ -11,6 +11,7 @@ const Agents = () => {
   const [selectedEmbeddingId, setSelectedEmbeddingId] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [activeTab, setActiveTab] = useState('general'); // 'general' | 'prompt'
+  const [n8nWorkflowId, setN8nWorkflowId] = useState('');
 
   const fetchData = async () => {
     setLoading(true);
@@ -38,6 +39,7 @@ const Agents = () => {
     setSelectedLlmId(agent.llm_model_id || '');
     setSelectedEmbeddingId(agent.embedding_model_id || '');
     setSystemPrompt(agent.system_prompt || '');
+    setN8nWorkflowId(agent.n8n_workflow_id || '');
     setActiveTab('general');
   };
 
@@ -51,7 +53,8 @@ const Agents = () => {
         body: JSON.stringify({ 
           llm_model_id: selectedLlmId || null, 
           embedding_model_id: selectedEmbeddingId || null,
-          system_prompt: systemPrompt
+          system_prompt: systemPrompt,
+          n8n_workflow_id: n8nWorkflowId || null
         })
       });
       if (response.ok) {
@@ -278,6 +281,24 @@ const Agents = () => {
                                     <option key={m.id} value={m.id}>{m.name} ({m.provider_name})</option>
                                 ))}
                             </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginTop: '0.5rem', paddingTop: '1.25rem', borderTop: '1px solid #f1f5f9' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <RefreshCcw size={14} color="#3b82f6" /> 
+                                n8n Workflow ID (Sincronización Dinámica)
+                            </label>
+                            <input 
+                                type="text" 
+                                className="form-control" 
+                                placeholder="Ejem: BpHmP0I2FwtCcoK9"
+                                value={n8nWorkflowId}
+                                onChange={(e) => setN8nWorkflowId(e.target.value)}
+                                style={{ fontSize: '0.875rem' }}
+                            />
+                            <p style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.4rem' }}>
+                                Si este campo tiene un ID, se actualizarán las credenciales de IA en n8n automáticamente al Guardar.
+                            </p>
                         </div>
                     </>
                 ) : (
