@@ -2,18 +2,30 @@ import React, { useState, useEffect } from 'react';
 
 const Dashboard = () => {
   const [counts, setCounts] = useState({ agents: 0, llms: 0, tokens: '0' });
+  const [executions, setExecutions] = useState(0);
+  const [isTriggering, setIsTriggering] = useState(false);
+  const [triggerStatus, setTriggerStatus] = useState(null);
 
   useEffect(() => {
-    const fetchCounts = async () => {
+    const fetchData = async () => {
       try {
-        const res = await fetch('/api/models');
-        const data = await res.json();
-        setCounts(prev => ({ ...prev, llms: data.length }));
+        // Cargar conteo de modelos
+        const modRes = await fetch('/api/models');
+        const mods = await modRes.json();
+        
+        // Cargar estadísticas globales (incluyendo n8n_executions)
+        const statRes = await fetch('/api/stats');
+        const stats = await statRes.json();
+        
+        setCounts(prev => ({ ...prev, llms: mods.length }));
+        if (stats.n8n_executions !== undefined) {
+          setExecutions(stats.n8n_executions);
+        }
       } catch (err) {
         console.error(err);
       }
     };
-    fetchCounts();
+    fetchData();
   }, []);
 
   // Inyección / Destrucción de la burbuja nativa del Chatbot de Flowise
@@ -68,9 +80,42 @@ const Dashboard = () => {
   const stats = [
     { title: 'Total Agents', value: counts.agents.toString() },
     { title: 'Models Configured', value: counts.llms.toString() },
-    { title: 'Storage Schema', value: 'Desarrollo' },
+    { title: 'Collector Status', value: 'Ready' },
     { title: 'API Status', value: 'Online' },
   ];
+
+  const handleTriggerN8n = async () => {
+    setIsTriggering(true);
+    setTriggerStatus(null);
+    try {
+      const response = await fetch('https://dev.n8n.erpconsultingsap.com/webhook-test/54687376-60de-458f-99cd-7664025bc2cd', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      const text = await response.text();
+      
+      if (text.includes("Workflow was started")) {
+        // Incrementar el contador en la DB
+        await fetch('/api/stats/increment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'n8n_executions' })
+        });
+        setExecutions(prev => prev + 1);
+        setTriggerStatus({ type: 'success', message: 'Workflow iniciado con éxito.' });
+      } else {
+        setTriggerStatus({ type: 'error', message: 'Respuesta inesperada de n8n.' });
+      }
+    } catch (error) {
+      console.error('Error disparando n8n:', error);
+      setTriggerStatus({ type: 'error', message: 'Error al conectar con n8n.' });
+    } finally {
+      setIsTriggering(false);
+      // Limpiar el mensaje de estado después de 5 segundos
+      setTimeout(() => setTriggerStatus(null), 5000);
+    }
+  };
 
   return (
     <div>
@@ -94,15 +139,51 @@ const Dashboard = () => {
         <div style={{ marginBottom: '1rem', fontWeight: 600 }}>Platform Activity</div>
         <div style={{ 
           width: '100%', 
-          height: '240px', 
-          backgroundColor: '#f1f5f9', 
+          minHeight: '200px', 
+          backgroundColor: '#f8fafc', 
           borderRadius: '8px',
+          border: '1px dashed #cbd5e1',
           display: 'flex',
+          flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          color: '#94a3b8'
+          padding: '2rem'
         }}>
-          [ Chart Placeholder ]
+          <div style={{ marginBottom: '1.5rem', textAlign: 'center' }}>
+            <div style={{ fontSize: '0.875rem', color: '#64748b', marginBottom: '0.25rem' }}>Total Ejecuciones del Agente</div>
+            <div style={{ fontSize: '3rem', fontWeight: 800, color: '#1e293b' }}>{executions}</div>
+          </div>
+
+          <button 
+            onClick={handleTriggerN8n}
+            disabled={isTriggering}
+            style={{ 
+              backgroundColor: isTriggering ? '#94a3b8' : '#3b82f6',
+              color: 'white',
+              border: 'none',
+              padding: '0.75rem 2rem',
+              borderRadius: '6px',
+              fontWeight: 600,
+              cursor: isTriggering ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            {isTriggering ? 'Ejecutando...' : 'Ejecutar Agente de Cobranzas'}
+          </button>
+
+          {triggerStatus && (
+            <div style={{ 
+              marginTop: '1rem', 
+              fontSize: '0.875rem', 
+              color: triggerStatus.type === 'success' ? '#10b981' : '#ef4444',
+              fontWeight: 500
+            }}>
+              {triggerStatus.message}
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -740,6 +740,122 @@ app.post('/api/chat/messages', async (req, res) => {
     }
 });
 
+// ==========================================
+// RUTAS PARA SAP (MOCK) & LOGS
+// ==========================================
+
+// GET /api/sap/open-items - Consultar partidas abiertas (Filtro BSCHL 01/11)
+app.get('/api/sap/open-items', async (req, res) => {
+    const { bukrs } = req.query;
+    console.log('GET /api/sap/open-items', { bukrs });
+    try {
+        // Filtro estricto: BSCHL IN ('01', '11') => Facturas y NC
+        const queryText = bukrs 
+            ? 'SELECT kunnr, bukrs, belnr, bldat, faedt, dmbtr, waers, augbl, zterm, bschl FROM desarrollo.sap_bsid WHERE bukrs = $1 AND augbl = \'\' AND bschl IN (\'01\', \'11\')' 
+            : 'SELECT kunnr, bukrs, belnr, bldat, faedt, dmbtr, waers, augbl, zterm, bschl FROM desarrollo.sap_bsid WHERE augbl = \'\' AND bschl IN (\'01\', \'11\')';
+        const params = bukrs ? [bukrs] : [];
+        const { rows } = await db.query(queryText, params);
+        res.json(rows);
+    } catch (err) {
+        console.error('Error en GET /api/sap/open-items:', err);
+        res.status(500).json({ error: 'Error al obtener partidas abiertas' });
+    }
+});
+
+// GET /api/sap/customer-contact/:kunnr - Consultar contacto de cliente
+app.get('/api/sap/customer-contact/:kunnr', async (req, res) => {
+    const { kunnr } = req.params;
+    console.log('GET /api/sap/customer-contact/' + kunnr);
+    try {
+        const { rows: customerRows } = await db.query('SELECT * FROM desarrollo.sap_kna1 WHERE kunnr = $1', [kunnr]);
+        const { rows: contactRows } = await db.query('SELECT * FROM desarrollo.sap_knvk WHERE kunnr = $1 ORDER BY pafkt DESC', [kunnr]);
+        
+        if (customerRows.length === 0) return res.status(404).json({ error: 'Cliente no encontrado' });
+        
+        res.json({
+            master: customerRows[0],
+            contacts: contactRows
+        });
+    } catch (err) {
+        console.error('Error en GET /api/sap/customer-contact:', err);
+        res.status(500).json({ error: 'Error al obtener contacto' });
+    }
+});
+
+// POST /api/agent/logs - Registrar actividad de ejecución
+app.post('/api/agent/logs', async (req, res) => {
+    const { agent_name, kunnr, action, status, detail } = req.body;
+    console.log('POST /api/agent/logs', { agent_name, kunnr, action, status });
+    try {
+        // Aseguramos que la tabla exista (just-in-time migration)
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS desarrollo.agent_logs (
+                id SERIAL PRIMARY KEY,
+                agent_name VARCHAR(100),
+                kunnr VARCHAR(10),
+                action VARCHAR(50),
+                status VARCHAR(20),
+                detail TEXT,
+                timestamp TIMESTAMP DEFAULT NOW()
+            )
+        `);
+
+        const { rows } = await db.query(
+            `INSERT INTO desarrollo.agent_logs (agent_name, kunnr, action, status, detail)
+             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            [agent_name, kunnr, action, status, detail]
+        );
+        res.status(201).json(rows[0]);
+    } catch (err) {
+        console.error('Error en POST /api/agent/logs:', err);
+        res.status(500).json({ error: 'Error al guardar log' });
+    }
+});
+
+// ==========================================
+// RUTAS PARA ESTADÍSTICAS
+// ==========================================
+
+// GET /api/stats - Obtener estadísticas globales
+app.get('/api/stats', async (req, res) => {
+    try {
+        const { rows } = await db.query('SELECT key, value FROM desarrollo.platform_stats');
+        // Convertir array de filas a un objeto llave-valor para facilitar su uso en React
+        const statsObj = rows.reduce((acc, row) => {
+            acc[row.key] = row.value;
+            return acc;
+        }, {});
+        res.json(statsObj);
+    } catch (err) {
+        console.error('Error en GET /api/stats:', err);
+        res.status(500).json({ error: 'Error al obtener estadísticas' });
+    }
+});
+
+// POST /api/stats/increment - Incrementar un contador
+app.post('/api/stats/increment', async (req, res) => {
+    const { key } = req.body;
+    if (!key) return res.status(400).json({ error: 'Se requiere una key para incrementar' });
+    
+    try {
+        const { rows } = await db.query(
+            `UPDATE desarrollo.platform_stats 
+             SET value = value + 1, updated_at = NOW() 
+             WHERE key = $1 RETURNING *`,
+            [key]
+        );
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Estadística no encontrada' });
+        }
+        
+        res.json(rows[0]);
+    } catch (err) {
+        console.error('Error en POST /api/stats/increment:', err);
+        res.status(500).json({ error: 'Error al incrementar estadística' });
+    }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Backend server running on http://0.0.0.0:${PORT}`);
 });
