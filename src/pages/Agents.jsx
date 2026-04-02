@@ -201,7 +201,15 @@ const Agents = () => {
             backgroundColor: 'rgba(15, 23, 42, 0.5)', backdropFilter: 'blur(4px)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100
         }}>
-          <div className="modal-content" style={{ width: '100%', maxWidth: '500px', background: 'white', borderRadius: '16px', padding: '2rem', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)' }}>
+          <div className="modal-content" style={{ 
+              width: '100%', 
+              maxWidth: activeTab === 'prompt' ? '800px' : '500px', 
+              background: 'white', 
+              borderRadius: '16px', 
+              padding: '2rem', 
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+              transition: 'max-width 0.3s ease-in-out'
+          }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Agent Configuration</h2>
               <button 
@@ -245,6 +253,24 @@ const Agents = () => {
                 >
                     System Prompt
                 </button>
+                {editingAgent?.name === 'CollectionsNotifyAgent' && (
+                    <button 
+                        type="button"
+                        onClick={() => setActiveTab('skills')}
+                        style={{ 
+                            padding: '0.5rem 0',
+                            fontSize: '0.875rem',
+                            borderBottom: activeTab === 'skills' ? '2px solid #3b82f6' : '2px solid transparent',
+                            color: activeTab === 'skills' ? '#3b82f6' : '#64748b',
+                            fontWeight: activeTab === 'skills' ? 600 : 400,
+                            background: 'transparent',
+                            borderLeft: 'none', borderTop: 'none', borderRight: 'none',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        Skills
+                    </button>
+                )}
             </div>
             
             <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -269,24 +295,26 @@ const Agents = () => {
                             </select>
                         </div>
 
-                        <div className="form-group">
-                            <label>Embedding Model</label>
-                            <select 
-                                className="form-control" 
-                                value={selectedEmbeddingId} 
-                                onChange={(e) => setSelectedEmbeddingId(e.target.value)}
-                            >
-                                <option value="">— None —</option>
-                                {embeddingModels.map(m => (
-                                    <option key={m.id} value={m.id}>{m.name} ({m.provider_name})</option>
-                                ))}
-                            </select>
-                        </div>
+                        {editingAgent?.name !== 'CollectionsNotifyAgent' && (
+                            <div className="form-group">
+                                <label>Embedding Model</label>
+                                <select 
+                                    className="form-control" 
+                                    value={selectedEmbeddingId} 
+                                    onChange={(e) => setSelectedEmbeddingId(e.target.value)}
+                                >
+                                    <option value="">— None —</option>
+                                    {embeddingModels.map(m => (
+                                        <option key={m.id} value={m.id}>{m.name} ({m.provider_name})</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
 
                         <div className="form-group" style={{ marginTop: '0.5rem', paddingTop: '1.25rem', borderTop: '1px solid #f1f5f9' }}>
                             <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                 <RefreshCcw size={14} color="#3b82f6" /> 
-                                n8n Workflow ID (Sincronización Dinámica)
+                                {editingAgent?.name === 'Chat Flowise' ? 'Flowise Chatflow ID (Sincronización Dinámica)' : 'n8n Workflow ID (Sincronización Dinámica)'}
                             </label>
                             <input 
                                 type="text" 
@@ -297,23 +325,83 @@ const Agents = () => {
                                 style={{ fontSize: '0.875rem' }}
                             />
                             <p style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.4rem' }}>
-                                Si este campo tiene un ID, se actualizarán las credenciales de IA en n8n automáticamente al Guardar.
+                                {editingAgent?.name === 'Chat Flowise' 
+                                  ? 'Si este campo tiene un ID, se referenciará a Flowise para las llamadas de chat.' 
+                                  : 'Si este campo tiene un ID, se actualizarán las credenciales de IA en n8n automáticamente al Guardar.'}
                             </p>
                         </div>
                     </>
-                ) : (
+                ) : activeTab === 'prompt' ? (
                     <div className="form-group">
                         <label>Instructions & Behavior</label>
                         <p style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.5rem' }}>
                             Define aquí cómo debe comportarse el agente y qué reglas debe seguir.
                         </p>
-                        <textarea 
-                            className="form-control" 
-                            style={{ minHeight: '260px', fontFamily: 'monospace', fontSize: '0.875rem', lineHeight: '1.5' }}
-                            value={systemPrompt}
-                            onChange={(e) => setSystemPrompt(e.target.value)}
-                            placeholder="Escribe el system prompt aquí..."
-                        ></textarea>
+                        <div style={{ position: 'relative', width: '100%' }}>
+                            <div 
+                                id="prompt-highlight-bg"
+                                className="form-control" 
+                                style={{ 
+                                    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                                    margin: 0, padding: '0.75rem', /* Same padding as form-control */
+                                    fontFamily: 'monospace', fontSize: '0.875rem', lineHeight: '1.5',
+                                    color: '#64748b',
+                                    whiteSpace: 'pre-wrap', wordWrap: 'break-word',
+                                    overflowY: 'auto', overflowX: 'hidden',
+                                    pointerEvents: 'none',
+                                    borderColor: 'transparent',
+                                    background: '#ffffff',
+                                    zIndex: 1
+                                }}
+                            >
+                                {(systemPrompt || '').split(/(\{[\s\S]*?\})/).map((part, i) => 
+                                    part.startsWith('{') && part.endsWith('}') 
+                                        ? <strong key={i} style={{ color: '#0f172a', fontWeight: 800, backgroundColor: '#fef08a', padding: '0 2px', borderRadius: '3px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>{part}</strong> 
+                                        : <span key={i}>{part}</span>
+                                )}
+                                {/* Extra space to sync scroll exactly like textarea */}
+                                <br />
+                            </div>
+                            <textarea 
+                                className="form-control" 
+                                style={{ 
+                                    position: 'relative', display: 'block', width: '100%',
+                                    minHeight: '260px', fontFamily: 'monospace', fontSize: '0.875rem', lineHeight: '1.5',
+                                    color: 'transparent', /* The text is transparent so the background highlighted text is visible */
+                                    background: 'transparent',
+                                    caretColor: '#0f172a',
+                                    resize: 'vertical', /* Permitir resize al usuario SOLO vertical, tal y como funcionaba bién */
+                                    zIndex: 2
+                                }}
+                                value={systemPrompt}
+                                onChange={(e) => setSystemPrompt(e.target.value)}
+                                onScroll={(e) => {
+                                    const bg = document.getElementById('prompt-highlight-bg');
+                                    if (bg) bg.scrollTop = e.target.scrollTop;
+                                }}
+                                placeholder="Escribe el system prompt aquí..."
+                                spellCheck="false"
+                            ></textarea>
+                        </div>
+                    </div>
+                ) : activeTab === 'skills' && (
+                    <div className="form-group fade-in">
+                        <label>Tools & Skills Registradas</label>
+                        <p style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '1rem' }}>
+                            Estas herramientas le permiten interaccionar con APIs o entornos externos.
+                        </p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                            {['send_mail', 'Calculator', 'Think'].map(skill => (
+                                <div key={skill} style={{
+                                    display: 'flex', alignItems: 'center', padding: '0.75rem 1rem', 
+                                    background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px',
+                                    fontWeight: 500, color: '#334155'
+                                }}>
+                                    <code style={{ background: '#e2e8f0', padding: '0.2rem 0.4rem', borderRadius: '4px', fontSize: '0.8rem', marginRight: '0.75rem' }}>TOOL</code>
+                                    {skill}
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 )}
                 

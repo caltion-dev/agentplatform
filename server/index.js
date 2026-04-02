@@ -214,7 +214,7 @@ const syncN8nCredential = async (name, type, providerName, apiKey, existingN8nId
     }
 };
 
-const syncN8nWorkflow = async (workflowId, modelId) => {
+const syncN8nWorkflow = async (workflowId, modelId, systemPrompt) => {
     const n8nUrl = process.env.N8N_API_URL;
     const n8nKey = process.env.N8N_API_KEY;
 
@@ -287,6 +287,16 @@ const syncN8nWorkflow = async (workflowId, modelId) => {
         }
 
         workflow.nodes = workflow.nodes.map(node => {
+            // 1. Sincronizar el System Prompt si este es un nodo de "AI Agent"
+            if (systemPrompt && (node.type.includes('@n8n/n8n-nodes-langchain.agent') || node.name === 'AI Agent' || node.type.includes('aiAgent'))) {
+                console.log(`[n8n-sync] Injecting system prompt into Agent node: ${node.name}`);
+                if (!node.parameters) node.parameters = {};
+                if (!node.parameters.options) node.parameters.options = {};
+                
+                // Guardar/Actualizar el system message
+                node.parameters.options.systemMessage = systemPrompt;
+                modified = true;
+            }
             // Buscamos cualquier nodo de chat de LangChain (GoogleGemini, GooglePalm o OpenAi)
             if (node.type.includes('lmChatOpenAi') || node.type.includes('lmChatGoogleGemini') || node.type.includes('lmChatGooglePalm')) {
                 
@@ -808,12 +818,14 @@ app.put('/api/agents/:id', async (req, res) => {
 
         res.json(rows[0]);
 
+        const dbSystemPrompt = rows[0].system_prompt;
+
         // 3. Sincronizar en segundo plano con Flowise y n8n
         syncFlowiseChatflow(id).catch(console.error);
         console.log(`[n8n-sync] Trigger check: savedWorkflowId=${savedWorkflowId}, llm_model_id=${llm_model_id}`);
         if (savedWorkflowId && llm_model_id) {
-            console.log(`[n8n-sync] Triggering syncN8nWorkflow(${savedWorkflowId}, ${llm_model_id})`);
-            syncN8nWorkflow(savedWorkflowId, llm_model_id).catch(console.error);
+            console.log(`[n8n-sync] Triggering syncN8nWorkflow(${savedWorkflowId}, ${llm_model_id}, hasPrompt: ${!!dbSystemPrompt})`);
+            syncN8nWorkflow(savedWorkflowId, llm_model_id, dbSystemPrompt).catch(console.error);
         } else {
             console.warn(`[n8n-sync] SKIPPED: workflow=${savedWorkflowId}, model=${llm_model_id}`);
         }
